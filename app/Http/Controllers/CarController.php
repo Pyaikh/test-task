@@ -2,9 +2,9 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Http\Request;
+use App\Http\Requests\AvailableCarsRequest;
 use Carbon\Carbon;
-use App\Models\Car;
+use App\Services\CarAvailabilityService;
 use OpenApi\Annotations as OA;
 
 class CarController extends Controller
@@ -27,17 +27,8 @@ class CarController extends Controller
      *   )
      * )
      */
-    public function available(Request $request)
+    public function available(AvailableCarsRequest $request, CarAvailabilityService $service)
     {
-        $request->validate([
-            'start_time' => 'required|date',
-            'end_time' => 'required|date|after:start_time',
-            'model_id' => 'nullable|integer|exists:car_models,id',
-            'category_id' => 'nullable|integer|exists:comfort_categories,id',
-            'page' => 'nullable|integer|min:1',
-            'per_page' => 'nullable|integer|min:1|max:100',
-        ]);
-
         $user = $request->user();
         if (!$user || !$user->position) {
             return response()->json([
@@ -49,29 +40,16 @@ class CarController extends Controller
         }
         $start = Carbon::parse($request->start_time);
         $end = Carbon::parse($request->end_time);
-
-        $allowedCategories = $user->position
-            ->comfortCategories()
-            ->pluck('id');
-
-        $query = Car::with(['model.comfortCategory', 'driver'])
-            ->whereHas('model', function ($q) use ($allowedCategories) {
-                $q->whereIn('comfort_category_id', $allowedCategories);
-            })
-            ->available($start, $end);
-
-        if ($request->filled('model_id')) {
-            $query->where('model_id', $request->model_id);
-        }
-
-        if ($request->filled('category_id')) {
-            $query->whereHas('model', function ($q) use ($request) {
-                $q->where('comfort_category_id', $request->category_id);
-            });
-        }
-
         $perPage = (int)($request->input('per_page', 15));
-        $paginator = $query->paginate($perPage);
+
+        $paginator = $service->findAvailableCars(
+            $user->id,
+            $start,
+            $end,
+            $request->model_id,
+            $request->category_id,
+            $perPage
+        );
 
         return response()->json([
             'data' => $paginator->items(),
